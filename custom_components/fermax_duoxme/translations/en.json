@@ -39,12 +39,25 @@
   },
   "entity": {
     "sensor": {
-      "connection_state": { "name": "Connection state" },
-      "wifi_signal": { "name": "Wi-Fi signal" },
-      "last_call": { "name": "Last call" }
+      "connection_state": {
+        "name": "Connection state"
+      },
+      "wifi_signal": {
+        "name": "Wi-Fi signal"
+      },
+      "last_call": {
+        "name": "Last call"
+      }
     },
     "binary_sensor": {
-      "connectivity": { "name": "Connectivity" }
+      "connectivity": {
+        "name": "Connectivity"
+      }
+    },
+    "button": {
+      "auto_on": {
+        "name": "Auto-on"
+      }
     }
   }
 }

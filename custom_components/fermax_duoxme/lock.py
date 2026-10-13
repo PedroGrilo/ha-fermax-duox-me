@@ -32,10 +32,8 @@ async def async_setup_entry(
     entities: list[FermaxDoorLock] = []
     for device in coordinator.data.devices.values():
         for door in device.doors:
-            if door.visible:
-                entities.append(
-                    FermaxDoorLock(coordinator, device.device_id, door)
-                )
+            # Hidden doors still get an entity, but disabled by default.
+            entities.append(FermaxDoorLock(coordinator, device.device_id, door))
     async_add_entities(entities)
 
 
@@ -51,7 +49,8 @@ class FermaxDoorLock(FermaxEntity, LockEntity):
         super().__init__(coordinator, device_id)
         self._door = door
         self._attr_unique_id = f"{device_id}_{door.key}_lock"
-        self._attr_name = door.title
+        self._attr_name = door.display_name
+        self._attr_entity_registry_enabled_default = door.visible
         self._attr_is_locked = True
         self._unsub_relock = None
 

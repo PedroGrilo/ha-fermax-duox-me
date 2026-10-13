@@ -35,11 +35,11 @@ class FermaxEntity(CoordinatorEntity[FermaxDuoxmeCoordinator]):
         device = self.device
         info = self.coordinator.data.info.get(self._device_id, {})
         name = device.name if device else self._device_id
+        # Monitor model fields: subtype, blueStream, photocaller, wirelessSignal.
+        model = info.get("subtype") or info.get("subType") or "DuoxMe"
         return DeviceInfo(
             identifiers={(DOMAIN, self._device_id)},
             name=name,
             manufacturer="Fermax",
-            model=str(info.get("family") or info.get("deviceType") or "DuoxMe"),
-            sw_version=str(info.get("firmware") or info.get("fwVersion") or "")
-            or None,
+            model=str(model),
         )

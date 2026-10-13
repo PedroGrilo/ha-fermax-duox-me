@@ -12,19 +12,27 @@ account; they are guarded so a failure never breaks the rest of the integration.
 
 from __future__ import annotations
 
+import base64
 import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from aiohttp import ClientResponseError, ClientSession, FormData
+from aiohttp import ClientResponseError, ClientSession
 
 from .const import (
     API_BASE,
-    OAUTH_BASIC_AUTH,
+    OAUTH_CLIENT_ID,
+    OAUTH_CLIENT_SECRET,
     OAUTH_URL,
     USER_AGENT,
 )
+
+
+def _basic_auth_header() -> str:
+    """HTTP Basic header the app builds from its OAuth client credentials."""
+    raw = f"{OAUTH_CLIENT_ID}:{OAUTH_CLIENT_SECRET}".encode()
+    return "Basic " + base64.b64encode(raw).decode()
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,14 +65,30 @@ class FermaxTokens:
         return time.time() >= (self.expires_at - _TOKEN_EXPIRY_MARGIN)
 
 
+_DOOR_DEFAULT_NAMES = {
+    "ZERO": "Door",
+    "ONE": "Door 1",
+    "TWO": "Door 2",
+    "THREE": "Door 3",
+    "GENERAL": "General door",
+}
+
+
 @dataclass
 class AccessDoor:
     """One openable door within a device's accessDoorMap."""
 
-    key: str  # ZERO / ONE / TWO / THREE
+    key: str  # ZERO / ONE / TWO / THREE / GENERAL
     title: str
     visible: bool
     access_id: dict[str, int]  # {"block": .., "subblock": .., "number": ..}
+
+    @property
+    def display_name(self) -> str:
+        """Human name: the backend title, or a friendly default when it's blank."""
+        if self.title and self.title.strip():
+            return self.title.strip()
+        return _DOOR_DEFAULT_NAMES.get(self.key.upper(), self.key.title())
 
 
 @dataclass
@@ -117,9 +141,9 @@ def _parse_device(pairing: dict[str, Any]) -> FermaxDevice:
                     title=str(entry.get("title") or key.title()),
                     visible=bool(entry.get("visible", True)),
                     access_id={
-                        "block": int(access_id.get("block", 0)),
-                        "subblock": int(access_id.get("subblock", 0)),
-                        "number": int(access_id.get("number", 0)),
+                        "block": int(access_id.get("block") or 0),
+                        "subblock": int(access_id.get("subblock") or 0),
+                        "number": int(access_id.get("number") or 0),
                     },
                 )
             )
@@ -150,28 +174,35 @@ class FermaxDuoxmeClient:
 
     async def async_login(self, email: str, password: str) -> FermaxTokens:
         """Log in with email/password (OAuth2 password grant)."""
-        data = FormData()
-        data.add_field("grant_type", "password")
-        data.add_field("username", email)
-        data.add_field("password", password)
-        self._tokens = await self._token_request(data)
+        self._tokens = await self._token_request(
+            {
+                "grant_type": "password",
+                "username": email,
+                "password": password,
+            }
+        )
         return self._tokens
 
     async def async_refresh(self) -> FermaxTokens:
         """Refresh the access token using the stored refresh token."""
         if not self._tokens:
             raise FermaxAuthError("No tokens available to refresh")
-        data = FormData()
-        data.add_field("grant_type", "refresh_token")
-        data.add_field("refresh_token", self._tokens.refresh_token)
-        self._tokens = await self._token_request(data)
+        self._tokens = await self._token_request(
+            {
+                "grant_type": "refresh_token",
+                "refresh_token": self._tokens.refresh_token,
+            }
+        )
         return self._tokens
 
-    async def _token_request(self, data: FormData) -> FermaxTokens:
+    async def _token_request(self, data: dict[str, str]) -> FermaxTokens:
+        # Exactly as the app: Basic client auth in the header, grant fields in an
+        # x-www-form-urlencoded body.
         headers = {
-            "Authorization": OAUTH_BASIC_AUTH,
+            "Authorization": _basic_auth_header(),
             "User-Agent": USER_AGENT,
             "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
         }
         try:
             async with self._session.post(
@@ -253,12 +284,12 @@ class FermaxDuoxmeClient:
     # ----------------------------------------------------------- high level
 
     async def async_get_user(self) -> dict[str, Any]:
-        """GET api/v1/users/me — account profile."""
-        return await self._request("GET", "api/v1/users/me") or {}
+        """GET /user/api/v1/users/me — account profile."""
+        return await self._request("GET", "user/api/v1/users/me") or {}
 
     async def async_get_devices(self) -> list[FermaxDevice]:
-        """GET api/v4/pairings/me — paired homes/devices with their doors."""
-        data = await self._request("GET", "api/v4/pairings/me")
+        """GET /pairing/api/v4/pairings/me — paired homes/devices with their doors."""
+        data = await self._request("GET", "pairing/api/v4/pairings/me")
         pairings: list[dict[str, Any]]
         if isinstance(data, list):
             pairings = data
@@ -275,55 +306,53 @@ class FermaxDuoxmeClient:
         return [_parse_device(p) for p in pairings if isinstance(p, dict)]
 
     async def async_open_door(self, device_id: str, access_id: dict[str, int]) -> None:
-        """POST api/v1/device/{deviceId}/directed-opendoor — open a specific door.
+        """POST /deviceaction/api/v1/device/{deviceId}/directed-opendoor.
 
-        Body is the door's accessId: {"block", "subblock", "number"}.
+        Body is the door's accessId: {"block", "number", "subblock"}
+        (DirectOpenDoorParamsRequest).
         """
         await self._request(
             "POST",
-            f"api/v1/device/{device_id}/directed-opendoor",
+            f"deviceaction/api/v1/device/{device_id}/directed-opendoor",
             json={
                 "block": int(access_id.get("block", 0)),
-                "subblock": int(access_id.get("subblock", 0)),
                 "number": int(access_id.get("number", 0)),
+                "subblock": int(access_id.get("subblock", 0)),
             },
         )
 
-    # ----------------------------------------------------- best-effort extras
-
-    async def async_set_auto_on(self, device_id: str, enabled: bool) -> Any:
-        """POST api/v2/device/{id}/autoon — toggle auto-on (best-effort body)."""
-        return await self._request(
-            "POST",
-            f"api/v2/device/{device_id}/autoon",
-            json={"autoOn": enabled},
-        )
-
     async def async_get_device_info(self, device_id: str) -> dict[str, Any]:
-        """GET api/v1/device/{id} — extended device info (firmware, wifi, ...)."""
-        data = await self._request("GET", f"api/v1/device/{device_id}")
+        """GET /deviceaction/api/v1/device/{id} — Monitor info.
+
+        Returns fields like connectionState, wirelessSignal, subtype,
+        blueStream, photocaller.
+        """
+        data = await self._request("GET", f"deviceaction/api/v1/device/{device_id}")
         return data if isinstance(data, dict) else {}
 
-    async def async_set_do_not_disturb(self, enabled: bool) -> Any:
-        """POST api/v1/mutedevice/me — mute/do-not-disturb for this account.
+    # ----------------------------------------------------- best-effort extras
 
-        Best-effort: field name inferred from the app (doNotDisturb).
+    async def async_trigger_auto_on(self, device_id: str) -> Any:
+        """POST /deviceaction/api/v1/device/{id}/autoon — trigger auto-on.
+
+        Best-effort: the v1 endpoint takes an optional ``directedTo`` query and
+        no body. It's a momentary action (there is no documented "off"), so it's
+        exposed as a button rather than a switch.
         """
         return await self._request(
             "POST",
-            "api/v1/mutedevice/me",
-            json={"doNotDisturb": enabled},
+            f"deviceaction/api/v1/device/{device_id}/autoon",
         )
 
     async def async_get_call_registry(
         self, device_id: str, *, limit: int = 20
     ) -> list[dict[str, Any]]:
-        """GET api/v1/callregistry/participants — recent calls (best-effort)."""
+        """GET /callmanager/api/v1/callregistry/participant — recent calls (best-effort)."""
         try:
             data = await self._request(
                 "GET",
-                "api/v1/callregistry/participants",
-                params={"deviceId": device_id, "size": limit},
+                "callmanager/api/v1/callregistry/participant",
+                params={"deviceId": device_id},
             )
         except FermaxApiError as err:
             _LOGGER.debug("call registry unavailable for %s: %s", device_id, err)
@@ -334,15 +363,10 @@ class FermaxDuoxmeClient:
             return data.get("content") or data.get("data") or []
         return []
 
-    async def async_get_photocaller(self, device_id: str) -> list[dict[str, Any]]:
-        """GET api/v1/{deviceId}/photocaller — recent caller snapshots (best-effort)."""
-        try:
-            data = await self._request("GET", f"api/v1/{device_id}/photocaller")
-        except FermaxApiError as err:
-            _LOGGER.debug("photocaller unavailable for %s: %s", device_id, err)
-            return []
-        if isinstance(data, list):
-            return data
-        if isinstance(data, dict):
-            return data.get("content") or data.get("data") or []
-        return []
+    async def async_set_photocaller(self, device_id: str, enabled: bool) -> Any:
+        """PUT /deviceaction/api/v1/{deviceId}/photocaller?value=<bool> (best-effort)."""
+        return await self._request(
+            "PUT",
+            f"deviceaction/api/v1/{device_id}/photocaller",
+            params={"value": str(enabled).lower()},
+        )

@@ -62,9 +62,11 @@ class FermaxDuoxmeCoordinator(DataUpdateCoordinator[FermaxData]):
             data.devices[device.device_id] = device
             # Extended info and call registry are best-effort; never fail the poll.
             try:
-                data.info[device.device_id] = await self.client.async_get_device_info(
-                    device.device_id
-                )
+                info = await self.client.async_get_device_info(device.device_id)
+                data.info[device.device_id] = info
+                # The pairing payload has no connection state; the Monitor does.
+                if "connectionState" in info:
+                    device.connection_state = info["connectionState"]
             except FermaxApiError as err:
                 _LOGGER.debug("device info failed for %s: %s", device.device_id, err)
             data.calls[device.device_id] = await self.client.async_get_call_registry(

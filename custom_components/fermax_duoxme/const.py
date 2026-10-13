@@ -11,12 +11,15 @@ DOMAIN = "fermax_duoxme"
 OAUTH_URL = "https://oauth-pro-duoxme.fermax.io/oauth/token"
 API_BASE = "https://pro-duoxme.fermax.io"
 
-# OAuth2 "Resource Owner Password Credentials" client shipped in the app.
-# Basic base64("duoxme:qxhx6zha5mjcypz42k2h8owhnkxbt_mixcs.zc9dp5ngo2djzfu7ignqe9abbm54yu")
-OAUTH_BASIC_AUTH = (
-    "Basic ZHVveG1lOnF4aHg2emhhNW1qY3lwejQyazJoOG93aG5reGJ0X21peGNz"
-    "LnpjOWRwNW5nbzJkanpmdTdpZ25xZTlhYmJtNTR5dQ=="
-)
+# OAuth2 "Resource Owner Password Credentials" client, from the app's BuildConfig
+# (FLAVOR=BlueStreamPro, environment=PRO). The app logs in with:
+#   POST {oauth}/oauth/token
+#   Authorization: Basic base64(client_id:client_secret)
+#   body: username=<email>&password=<pw>&grant_type=password
+# (Note: the duoxme:qxhx... value in the APK is TRACING_BASIC_AUTH for telemetry,
+# NOT the OAuth client — using it returns invalid_client.)
+OAUTH_CLIENT_ID = "oe87y4nj6a2vz3h63lrh8y1p8lp4zewrhymhwa6ngz5oxf0"
+OAUTH_CLIENT_SECRET = "8r1e8jo3dk32o5i0i1l89wcgapp05sp8ossrpjnxrodv0wr"  # noqa: S105
 
 USER_AGENT = "okhttp/4.12.0"
 

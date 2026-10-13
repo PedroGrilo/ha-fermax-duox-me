@@ -19,7 +19,6 @@ from .coordinator import FermaxConfigEntry, FermaxDuoxmeCoordinator
 PLATFORMS: list[Platform] = [
     Platform.LOCK,
     Platform.BUTTON,
-    Platform.SWITCH,
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
 ]

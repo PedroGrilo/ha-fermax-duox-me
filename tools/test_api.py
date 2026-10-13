@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import sys
 import time
 
@@ -24,10 +25,10 @@ import aiohttp
 
 OAUTH_URL = "https://oauth-pro-duoxme.fermax.io/oauth/token"
 API_BASE = "https://pro-duoxme.fermax.io"
-BASIC = (
-    "Basic ZHVveG1lOnF4aHg2emhhNW1qY3lwejQyazJoOG93aG5reGJ0X21peGNz"
-    "LnpjOWRwNW5nbzJkanpmdTdpZ25xZTlhYmJtNTR5dQ=="
-)
+# Real OAuth client from the app's BuildConfig (FLAVOR=BlueStreamPro, env=PRO).
+CLIENT_ID = "oe87y4nj6a2vz3h63lrh8y1p8lp4zewrhymhwa6ngz5oxf0"
+CLIENT_SECRET = "8r1e8jo3dk32o5i0i1l89wcgapp05sp8ossrpjnxrodv0wr"
+BASIC = "Basic " + base64.b64encode(f"{CLIENT_ID}:{CLIENT_SECRET}".encode()).decode()
 UA = "okhttp/4.12.0"
 
 
@@ -35,7 +36,7 @@ async def login(session: aiohttp.ClientSession, email: str, password: str) -> st
     async with session.post(
         OAUTH_URL,
         data={"grant_type": "password", "username": email, "password": password},
-        headers={"Authorization": BASIC, "User-Agent": UA},
+        headers={"Authorization": BASIC, "User-Agent": UA, "Accept": "application/json"},
     ) as resp:
         body = await resp.json(content_type=None)
         if resp.status != 200:
@@ -61,7 +62,7 @@ async def get(session: aiohttp.ClientSession, token: str, path: str):
 
 async def open_door(session, token, device_id, access_id) -> None:
     async with session.post(
-        f"{API_BASE}/api/v1/device/{device_id}/directed-opendoor",
+        f"{API_BASE}/deviceaction/api/v1/device/{device_id}/directed-opendoor",
         json=access_id,
         headers={"Authorization": f"Bearer {token}", "User-Agent": UA},
     ) as resp:
@@ -78,13 +79,14 @@ async def main() -> None:
     async with aiohttp.ClientSession() as session:
         token = await login(session, args.email, args.password)
 
-        user = await get(session, token, "api/v1/users/me")
+        user = await get(session, token, "user/api/v1/users/me")
         print(f"[user] {user}")
 
-        pairings = await get(session, token, "api/v4/pairings/me")
+        pairings = await get(session, token, "pairing/api/v4/pairings/me")
         if isinstance(pairings, dict):
             pairings = pairings.get("pairings") or pairings.get("content") or []
         pairings = pairings or []
+        pairings = [p for p in pairings if isinstance(p, dict)]
         print(f"\n[devices] {len(pairings)} found:")
         for p in pairings:
             did = p.get("deviceId")

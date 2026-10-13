@@ -64,7 +64,7 @@ SENSORS: tuple[FermaxSensorDescription, ...] = (
         native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
-        value_fn=lambda c, d: c.data.info.get(d, {}).get("wifiSignal"),
+        value_fn=lambda c, d: c.data.info.get(d, {}).get("wirelessSignal"),
     ),
     FermaxSensorDescription(
         key="last_call",
