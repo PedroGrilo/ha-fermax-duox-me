@@ -1,0 +1,50 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Fermax DuoxMe",
+        "description": "Inicie sessão com o mesmo email e palavra-passe que usa na app Fermax DuoxMe (Blue).",
+        "data": {
+          "email": "Email",
+          "password": "Palavra-passe"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reautenticar Fermax DuoxMe",
+        "description": "Introduza novamente a palavra-passe de {email}.",
+        "data": {
+          "password": "Palavra-passe"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Email ou palavra-passe inválidos.",
+      "cannot_connect": "Não foi possível contactar a cloud da Fermax DuoxMe.",
+      "unknown": "Erro inesperado."
+    },
+    "abort": {
+      "already_configured": "Esta conta já está configurada.",
+      "reauth_successful": "Reautenticação concluída com sucesso."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opções",
+        "data": {
+          "update_interval": "Intervalo de atualização (segundos)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "connection_state": { "name": "Estado da ligação" },
+      "wifi_signal": { "name": "Sinal Wi-Fi" },
+      "last_call": { "name": "Última chamada" }
+    },
+    "binary_sensor": {
+      "connectivity": { "name": "Conectividade" }
+    }
+  }
+}
