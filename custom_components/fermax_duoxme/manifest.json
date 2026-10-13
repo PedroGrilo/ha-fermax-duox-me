@@ -1,12 +1,16 @@
 {
   "domain": "fermax_duoxme",
   "name": "Fermax DuoxMe",
-  "codeowners": ["@PedroGrilo"],
+  "codeowners": [
+    "@PedroGrilo"
+  ],
   "config_flow": true,
   "documentation": "https://github.com/PedroGrilo/ha-fermax-duox-me",
   "integration_type": "hub",
-  "iot_class": "cloud_polling",
+  "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/PedroGrilo/ha-fermax-duox-me/issues",
-  "requirements": [],
-  "version": "1.1.0"
+  "requirements": [
+    "firebase-messaging>=0.4.4"
+  ],
+  "version": "1.2.0"
 }

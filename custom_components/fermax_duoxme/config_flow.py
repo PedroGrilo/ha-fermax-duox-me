@@ -98,6 +98,9 @@ class FermaxDuoxmeConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except FermaxApiError:
                 errors["base"] = "cannot_connect"
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Unexpected error during re-authentication")
+                errors["base"] = "unknown"
             else:
                 return self.async_update_reload_and_abort(
                     entry,

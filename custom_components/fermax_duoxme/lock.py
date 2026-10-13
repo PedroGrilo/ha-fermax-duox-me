@@ -8,16 +8,16 @@ platform exposes the same doors with cleaner momentary semantics.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
 from homeassistant.components.lock import LockEntity
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 
-from .api import AccessDoor, FermaxApiError
+from .api import AccessDoor
 from .const import LOCK_RELOCK_DELAY
 from .coordinator import FermaxConfigEntry, FermaxDuoxmeCoordinator
 from .entity import FermaxEntity
@@ -52,26 +52,25 @@ class FermaxDoorLock(FermaxEntity, LockEntity):
         self._attr_name = door.display_name
         self._attr_entity_registry_enabled_default = door.visible
         self._attr_is_locked = True
-        self._unsub_relock = None
+        self._unsub_relock: Callable[[], None] | None = None
 
-    @property
-    def is_locked(self) -> bool | None:
-        return self._attr_is_locked
+    async def async_will_remove_from_hass(self) -> None:
+        self._cancel_relock()
+        await super().async_will_remove_from_hass()
+
+    @callback
+    def _cancel_relock(self) -> None:
+        if self._unsub_relock is not None:
+            self._unsub_relock()
+            self._unsub_relock = None
 
     async def async_unlock(self, **kwargs: Any) -> None:
         """Open the door (momentary)."""
-        try:
-            await self.coordinator.client.async_open_door(
-                self._device_id, self._door.access_id
-            )
-        except FermaxApiError as err:
-            raise HomeAssistantError(f"Failed to open {self._door.title}: {err}") from err
+        await self.coordinator.async_open_door(self._device_id, self._door)
 
         self._attr_is_locked = False
         self.async_write_ha_state()
-
-        if self._unsub_relock is not None:
-            self._unsub_relock()
+        self._cancel_relock()
 
         @callback
         def _relock(_now: datetime) -> None:
@@ -85,5 +84,6 @@ class FermaxDoorLock(FermaxEntity, LockEntity):
 
     async def async_lock(self, **kwargs: Any) -> None:
         """No physical lock action; just reflect the locked state."""
+        self._cancel_relock()
         self._attr_is_locked = True
         self.async_write_ha_state()

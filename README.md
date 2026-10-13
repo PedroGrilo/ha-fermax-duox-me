@@ -13,9 +13,11 @@ it works without any extra hardware.
 |----------|--------|-------|
 | `lock` | One per visible door | `unlock` opens the door, then auto-relocks after a few seconds (the relay is momentary). Great for voice/HomeKit. |
 | `button` | `Open <door>` per visible door | Clean momentary "open" action. |
-| `switch` | `Auto-on` per device | Auto-answer calls. *Best-effort* (disabled by default). |
-| `sensor` | Connection state, Last call, Wi-Fi signal | Last call comes from the call registry. |
+| `button` | `Auto-on` per device | Auto-answer calls. *Best-effort* (disabled by default). |
+| `sensor` | Connection state, Last call, Wi-Fi signal | Last call comes from the call registry (needs push). |
 | `binary_sensor` | Connectivity | Device online/offline. |
+| `event` | Doorbell per device | Fires `ring` the moment someone calls (needs push). |
+| `image` | Last call photo per device | Photocaller snapshot of the latest call (needs push + photocaller on). |
 
 ### Why no live video / answering calls?
 
@@ -23,7 +25,21 @@ The intercom's audio/video uses a WebRTC signalling server
 (`signaling-pro-duoxme.fermax.io`) and a full media stack that isn't practical
 to run inside Home Assistant. Opening doors, status and the call registry are all
 done over the plain REST API and are fully supported here. You can still build
-automations like *"when the last-call sensor updates, send me a notification"*.
+automations like *"when the doorbell rings, send me the call photo"*.
+
+### Doorbell rings & call photos (push)
+Home Assistant registers itself with your account as one more "phone" (a
+Firebase push token, exactly like the app does). That gives it the `ring`
+event in real time, and the call registry and photocaller photos, which the
+backend keys by that push token. Notes:
+
+- It uses the app's Firebase project identifiers and Web API key (`FCM_*` in
+  `const.py`, taken from the APK). Firebase keys are public by design; set
+  `FCM_API_KEY = ""` to run without push.
+- It uses one of the account's phone slots (`maxMobileTokens`). Removing the
+  integration unregisters it again.
+- The photo shows up a few seconds after the ring; the integration polls the
+  registry 5/15/40 s after each ring to pick it up.
 
 ## Install
 
@@ -49,6 +65,13 @@ pip install aiohttp
 python3 tools/test_api.py you@example.com 'your-password'
 ```
 This logs in, lists your devices and their doors, and (optionally) opens one.
+
+To check push and photos before installing (see the script header for details):
+```bash
+pip install aiohttp firebase-messaging
+python3 tools/test_api.py you@example.com 'pw' --listen
+python3 tools/test_api.py you@example.com 'pw' --unregister   # when done
+```
 
 ## Verified vs. best-effort endpoints
 - **Verified from the app:** OAuth login/refresh, `pairings/me`, `users/me`,

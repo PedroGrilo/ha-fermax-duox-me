@@ -12,16 +12,22 @@ account; they are guarded so a failure never breaks the rest of the integration.
 
 from __future__ import annotations
 
+import asyncio
 import base64
+import binascii
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from json import loads as json_loads
 from typing import Any
 
-from aiohttp import ClientResponseError, ClientSession
+from aiohttp import ClientError, ClientSession, ClientTimeout
 
 from .const import (
     API_BASE,
+    APP_BUILD,
+    APP_VERSION,
     OAUTH_CLIENT_ID,
     OAUTH_CLIENT_SECRET,
     OAUTH_URL,
@@ -34,10 +40,13 @@ def _basic_auth_header() -> str:
     raw = f"{OAUTH_CLIENT_ID}:{OAUTH_CLIENT_SECRET}".encode()
     return "Basic " + base64.b64encode(raw).decode()
 
+
 _LOGGER = logging.getLogger(__name__)
 
 # Refresh the access token this many seconds before it actually expires.
 _TOKEN_EXPIRY_MARGIN = 60
+
+_REQUEST_TIMEOUT = ClientTimeout(total=20)
 
 
 class FermaxError(Exception):
@@ -138,7 +147,7 @@ def _parse_device(pairing: dict[str, Any]) -> FermaxDevice:
             doors.append(
                 AccessDoor(
                     key=str(key),
-                    title=str(entry.get("title") or key.title()),
+                    title=str(entry.get("title") or ""),
                     visible=bool(entry.get("visible", True)),
                     access_id={
                         "block": int(access_id.get("block") or 0),
@@ -162,9 +171,17 @@ def _parse_device(pairing: dict[str, Any]) -> FermaxDevice:
 class FermaxDuoxmeClient:
     """Thin async wrapper around the DuoxMe cloud API."""
 
-    def __init__(self, session: ClientSession, tokens: FermaxTokens | None = None) -> None:
+    def __init__(
+        self,
+        session: ClientSession,
+        tokens: FermaxTokens | None = None,
+        on_tokens_refreshed: Callable[[FermaxTokens], None] | None = None,
+    ) -> None:
         self._session = session
         self._tokens = tokens
+        self._on_tokens_refreshed = on_tokens_refreshed
+        # Serialises refreshes so concurrent callers don't burn the refresh token.
+        self._refresh_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------ auth
 
@@ -187,12 +204,19 @@ class FermaxDuoxmeClient:
         """Refresh the access token using the stored refresh token."""
         if not self._tokens:
             raise FermaxAuthError("No tokens available to refresh")
-        self._tokens = await self._token_request(
-            {
-                "grant_type": "refresh_token",
-                "refresh_token": self._tokens.refresh_token,
-            }
-        )
+        stale_token = self._tokens.access_token
+        async with self._refresh_lock:
+            if self._tokens.access_token != stale_token:
+                # Another caller refreshed while we were waiting for the lock.
+                return self._tokens
+            self._tokens = await self._token_request(
+                {
+                    "grant_type": "refresh_token",
+                    "refresh_token": self._tokens.refresh_token,
+                }
+            )
+            if self._on_tokens_refreshed is not None:
+                self._on_tokens_refreshed(self._tokens)
         return self._tokens
 
     async def _token_request(self, data: dict[str, str]) -> FermaxTokens:
@@ -206,23 +230,24 @@ class FermaxDuoxmeClient:
         }
         try:
             async with self._session.post(
-                OAUTH_URL, data=data, headers=headers
+                OAUTH_URL, data=data, headers=headers, timeout=_REQUEST_TIMEOUT
             ) as resp:
-                body = await resp.json(content_type=None)
                 if resp.status in (400, 401, 403):
-                    raise FermaxAuthError(f"OAuth rejected ({resp.status}): {body}")
+                    text = await resp.text()
+                    raise FermaxAuthError(f"OAuth rejected ({resp.status}): {text}")
                 resp.raise_for_status()
-        except FermaxAuthError:
-            raise
-        except ClientResponseError as err:
+                body = await resp.json(content_type=None)
+        except (ClientError, TimeoutError, ValueError) as err:
             raise FermaxApiError(f"OAuth request failed: {err}") from err
-        except Exception as err:  # noqa: BLE001 - network/JSON errors
-            raise FermaxApiError(f"OAuth request error: {err}") from err
 
+        if not isinstance(body, dict):
+            raise FermaxApiError(f"Unexpected OAuth response: {body!r}")
         access = body.get("access_token")
         refresh = body.get("refresh_token")
         if not access or not refresh:
-            raise FermaxAuthError(f"OAuth response missing tokens: {body}")
+            raise FermaxAuthError(
+                f"OAuth response missing tokens (keys: {sorted(body)})"
+            )
         expires_in = float(body.get("expires_in", 3600))
         return FermaxTokens(
             access_token=access,
@@ -257,29 +282,34 @@ class FermaxDuoxmeClient:
         }
         try:
             async with self._session.request(
-                method, url, json=json, params=params, headers=headers
+                method,
+                url,
+                json=json,
+                params=params,
+                headers=headers,
+                timeout=_REQUEST_TIMEOUT,
             ) as resp:
-                if resp.status == 401 and retry_auth:
-                    # Token may have been revoked server-side; refresh once.
-                    await self.async_refresh()
-                    return await self._request(
-                        method, path, json=json, params=params, retry_auth=False
-                    )
-                if resp.status == 401:
-                    raise FermaxAuthError("Unauthorized after refresh")
+                status = resp.status
                 text = await resp.text()
-                if resp.status >= 400:
-                    raise FermaxApiError(f"{method} {path} -> {resp.status}: {text}")
-                if not text:
-                    return None
-                try:
-                    return await resp.json(content_type=None)
-                except Exception:  # noqa: BLE001 - some endpoints return plain text
-                    return text
-        except (FermaxAuthError, FermaxApiError):
-            raise
-        except Exception as err:  # noqa: BLE001
+        except (ClientError, TimeoutError) as err:
             raise FermaxApiError(f"{method} {path} error: {err}") from err
+
+        if status == 401:
+            if not retry_auth:
+                raise FermaxAuthError("Unauthorized after refresh")
+            # Token may have been revoked server-side; refresh once.
+            await self.async_refresh()
+            return await self._request(
+                method, path, json=json, params=params, retry_auth=False
+            )
+        if status >= 400:
+            raise FermaxApiError(f"{method} {path} -> {status}: {text}")
+        if not text:
+            return None
+        try:
+            return json_loads(text)
+        except ValueError:  # some endpoints return plain text
+            return text
 
     # ----------------------------------------------------------- high level
 
@@ -344,24 +374,83 @@ class FermaxDuoxmeClient:
             f"deviceaction/api/v1/device/{device_id}/autoon",
         )
 
+    async def async_register_app_token(
+        self, installation_id: str, token: str, *, locale: str = "en"
+    ) -> None:
+        """POST /notification/api/v2/apptoken — subscribe a push token.
+
+        Mirrors RegisterPushTokenUseCase: ``id`` is the Firebase installation id,
+        ``token`` the FCM registration token. The backend caps how many mobile
+        tokens an account may have (maxMobileTokens in the error body).
+        """
+        await self._request(
+            "POST",
+            "notification/api/v2/apptoken",
+            json=self._app_token_body(installation_id, token, locale, active=True),
+        )
+
+    async def async_unregister_app_token(
+        self, installation_id: str, token: str, *, locale: str = "en"
+    ) -> None:
+        """DELETE /notification/api/v2/apptoken/{id} — drop a push token."""
+        await self._request(
+            "DELETE",
+            f"notification/api/v2/apptoken/{installation_id}",
+            json=self._app_token_body(installation_id, token, locale, active=False),
+        )
+
+    @staticmethod
+    def _app_token_body(
+        installation_id: str, token: str, locale: str, *, active: bool
+    ) -> dict[str, Any]:
+        return {
+            "id": installation_id,
+            "token": token,
+            "appVersion": APP_VERSION,
+            "locale": locale,
+            "os": "ANDROID",
+            "osVersion": "14",
+            "appBuild": APP_BUILD,
+            "phoneMobile": "Home Assistant",
+            "active": active,
+            "force": active,
+        }
+
     async def async_get_call_registry(
-        self, device_id: str, *, limit: int = 20
+        self, app_token: str, *, registry_type: str = "all"
     ) -> list[dict[str, Any]]:
-        """GET /callmanager/api/v1/callregistry/participant — recent calls (best-effort)."""
-        try:
-            data = await self._request(
-                "GET",
-                "callmanager/api/v1/callregistry/participant",
-                params={"deviceId": device_id},
-            )
-        except FermaxApiError as err:
-            _LOGGER.debug("call registry unavailable for %s: %s", device_id, err)
-            return []
-        if isinstance(data, list):
-            return data
+        """GET /callmanager/api/v1/callregistry/participant — recent calls.
+
+        The registry is per push token (``appToken``), not per device; entries
+        carry ``deviceId``, ``callDate`` and, with photocaller, a ``photoId``.
+        """
+        data = await self._request(
+            "GET",
+            "callmanager/api/v1/callregistry/participant",
+            params={"appToken": app_token, "callRegistryType": registry_type},
+        )
         if isinstance(data, dict):
-            return data.get("content") or data.get("data") or []
-        return []
+            data = data.get("content") or data.get("data") or []
+        if not isinstance(data, list):
+            return []
+        return [call for call in data if isinstance(call, dict)]
+
+    async def async_get_call_photo(self, photo_id: str) -> bytes | None:
+        """GET /callmanager/api/v1/photocall?photoId= — photocaller snapshot."""
+        data = await self._request(
+            "GET", "callmanager/api/v1/photocall", params={"photoId": photo_id}
+        )
+        if not isinstance(data, dict):
+            return None
+        encoded = (data.get("base64Image") or {}).get("data")
+        if not encoded:
+            return None
+        # Tolerate a data-URI prefix ("data:image/jpeg;base64,...").
+        encoded = encoded.split(",", 1)[-1]
+        try:
+            return base64.b64decode(encoded)
+        except (binascii.Error, ValueError) as err:
+            raise FermaxApiError(f"Invalid photo data for {photo_id}: {err}") from err
 
     async def async_set_photocaller(self, device_id: str, enabled: bool) -> Any:
         """PUT /deviceaction/api/v1/{deviceId}/photocaller?value=<bool> (best-effort)."""

@@ -58,6 +58,23 @@
       "auto_on": {
         "name": "Ligação automática"
       }
+    },
+    "event": {
+      "doorbell": {
+        "name": "Campainha",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "ring": "Toque"
+            }
+          }
+        }
+      }
+    },
+    "image": {
+      "last_call_photo": {
+        "name": "Foto da última chamada"
+      }
     }
   }
 }

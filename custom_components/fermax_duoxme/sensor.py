@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -15,28 +14,15 @@ from homeassistant.components.sensor import (
 from homeassistant.const import EntityCategory, SIGNAL_STRENGTH_DECIBELS_MILLIWATT
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.util import dt as dt_util
 
-from .coordinator import FermaxConfigEntry, FermaxDuoxmeCoordinator
+from .coordinator import FermaxConfigEntry, FermaxDuoxmeCoordinator, parse_call_time
 from .entity import FermaxEntity
 
 
 def _last_call_time(coordinator: FermaxDuoxmeCoordinator, device_id: str) -> Any:
-    calls = coordinator.data.calls.get(device_id) or []
-    if not calls:
-        return None
-    first = calls[0]
-    raw = first.get("callDate") or first.get("date") or first.get("createdAt")
-    if raw is None:
-        return None
-    # Accept epoch millis, epoch seconds, or ISO strings.
-    try:
-        if isinstance(raw, (int, float)):
-            ts = raw / 1000 if raw > 1e12 else raw
-            return datetime.fromtimestamp(ts, tz=dt_util.UTC)
-        return dt_util.parse_datetime(str(raw))
-    except (ValueError, OSError):
-        return None
+    # Calls are sorted newest first by the coordinator.
+    calls = coordinator.data.calls.get(device_id)
+    return parse_call_time(calls[0]) if calls else None
 
 
 @dataclass(frozen=True, kw_only=True)

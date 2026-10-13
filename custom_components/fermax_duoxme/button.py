@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .api import AccessDoor, FermaxApiError
+from .api import AccessDoor, FermaxError
 from .coordinator import FermaxConfigEntry, FermaxDuoxmeCoordinator
 from .entity import FermaxEntity
 
@@ -47,14 +47,7 @@ class FermaxOpenDoorButton(FermaxEntity, ButtonEntity):
         self._attr_entity_registry_enabled_default = door.visible
 
     async def async_press(self) -> None:
-        try:
-            await self.coordinator.client.async_open_door(
-                self._device_id, self._door.access_id
-            )
-        except FermaxApiError as err:
-            raise HomeAssistantError(
-                f"Failed to open {self._door.title}: {err}"
-            ) from err
+        await self.coordinator.async_open_door(self._device_id, self._door)
 
 
 class FermaxAutoOnButton(FermaxEntity, ButtonEntity):
@@ -74,5 +67,5 @@ class FermaxAutoOnButton(FermaxEntity, ButtonEntity):
     async def async_press(self) -> None:
         try:
             await self.coordinator.client.async_trigger_auto_on(self._device_id)
-        except FermaxApiError as err:
+        except FermaxError as err:
             raise HomeAssistantError(f"Failed to trigger auto-on: {err}") from err

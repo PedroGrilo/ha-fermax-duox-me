@@ -58,6 +58,23 @@
       "auto_on": {
         "name": "Auto-on"
       }
+    },
+    "event": {
+      "doorbell": {
+        "name": "Doorbell",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "ring": "Ring"
+            }
+          }
+        }
+      }
+    },
+    "image": {
+      "last_call_photo": {
+        "name": "Last call photo"
+      }
     }
   }
 }
