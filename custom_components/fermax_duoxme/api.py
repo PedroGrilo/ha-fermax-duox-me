@@ -442,7 +442,9 @@ class FermaxDuoxmeClient:
         )
         if not isinstance(data, dict):
             return None
-        encoded = (data.get("base64Image") or {}).get("data")
+        # The backend now returns the photo as "image": {"data", "type"};
+        # older responses used "base64Image" with the same shape.
+        encoded = (data.get("base64Image") or data.get("image") or {}).get("data")
         if not encoded:
             return None
         # Tolerate a data-URI prefix ("data:image/jpeg;base64,...").
