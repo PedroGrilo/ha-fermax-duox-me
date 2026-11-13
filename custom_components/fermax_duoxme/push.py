@@ -12,7 +12,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from firebase_messaging import FcmPushClient, FcmRegisterConfig
+from firebase_messaging import FcmPushClient, FcmPushClientConfig, FcmRegisterConfig
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -91,6 +91,9 @@ class FermaxPushListener:
             credentials_updated_callback=self._save_credentials,
             received_persistent_ids=self._persistent_ids,
             http_client_session=async_get_clientsession(self._hass),
+            # Keep listening through network blips: the default gives up for good
+            # after 3 sequential errors, leaving only the slow call-registry poll.
+            config=FcmPushClientConfig(abort_on_sequential_error_count=None),
         )
         token = await self._push.checkin_or_register()
         fid = installation_id(self._push.credentials)
